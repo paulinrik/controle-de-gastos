@@ -11,6 +11,8 @@
     <title>Meu Banco Pessoal</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         input[type=number]::-webkit-inner-spin-button,
@@ -18,619 +20,1325 @@
         .tab-btn { transition: all 0.2s; }
         .tab-btn.active { background-color: #1d4ed8; color: white; }
         .tab-btn:not(.active) { background-color: #e5e7eb; color: #374151; }
-        #tab-pessoal, #tab-conjunta { display: none; }
-        #tab-pessoal.show, #tab-conjunta.show { display: block; }
+        #tab-pessoal, #tab-conjunta, #tab-contas { display: none; }
+        #tab-pessoal.show, #tab-conjunta.show, #tab-contas.show { display: block; }
+
+        /* Toast */
+        #toast-container { position: fixed; top: 1rem; right: 1rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.5rem; pointer-events: none; }
+        .toast { padding: 0.75rem 1.25rem; border-radius: 0.75rem; font-size: 0.875rem; font-weight: 600; color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: slideIn 0.3s ease, fadeOut 0.4s ease 2.6s forwards; pointer-events: none; max-width: 280px; }
+        .toast.success { background: #16a34a; }
+        .toast.error { background: #dc2626; }
+        .toast.info { background: #2563eb; }
+        .toast.warning { background: #d97706; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+        /* Modal */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 1rem; backdrop-filter: blur(2px); }
+        .modal-box { background: white; border-radius: 1.25rem; padding: 1.5rem; width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+
+        /* Progress bar */
+        .progress-bar { height: 8px; background: #e5e7eb; border-radius: 99px; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 99px; transition: width 0.5s ease; }
+        .progress-fill.ok { background: #22c55e; }
+        .progress-fill.warn { background: #f59e0b; }
+        .progress-fill.over { background: #ef4444; }
+
+        /* Recorrente badge */
+        .badge-recorrente { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; background: #dbeafe; color: #1d4ed8; padding: 2px 6px; border-radius: 99px; font-weight: 600; }
+
+        /* Conta badge */
+        .conta-badge { display: inline-flex; align-items: center; font-size: 10px; padding: 2px 7px; border-radius: 99px; font-weight: 600; }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen pb-12">
+<body class="bg-gray-100 min-h-screen pb-16">
 
-    <header class="bg-gradient-to-r from-blue-700 to-blue-500 text-white p-6 sticky top-0 shadow-lg text-center rounded-b-3xl z-10">
-        <div id="header-pessoal">
-            <p class="text-sm font-medium text-blue-100 opacity-90 uppercase tracking-widest mb-1">Patrimônio Total</p>
-            <h1 class="text-4xl font-bold tracking-tight" id="main-balance">R$ 0,00</h1>
-            <button onclick="editInitialBalance()" class="mt-2 bg-blue-800 bg-opacity-40 hover:bg-opacity-60 text-white text-xs py-1 px-3 rounded-full transition">
-                ✏️ Ajustar Saldo Inicial
-            </button>
-        </div>
-        <div id="header-conjunta" style="display:none">
-            <p class="text-sm font-medium text-blue-100 opacity-90 uppercase tracking-widest mb-1">💑 Conta Conjunta</p>
-            <h1 class="text-4xl font-bold tracking-tight" id="conjunta-balance">R$ 0,00</h1>
-            <p class="text-xs text-blue-200 mt-1">Saldo disponível juntos</p>
-        </div>
-    </header>
+<!-- Toast container -->
+<div id="toast-container"></div>
 
-    <div class="max-w-md mx-auto px-4 mt-4">
-        <div class="flex gap-2 bg-gray-200 p-1 rounded-xl">
-            <button id="btn-pessoal" class="tab-btn active flex-1 py-2 rounded-lg text-sm font-semibold" onclick="switchTab('pessoal')">
-                💼 Pessoal
-            </button>
-            <button id="btn-conjunta" class="tab-btn flex-1 py-2 rounded-lg text-sm font-semibold" onclick="switchTab('conjunta')">
-                💑 Conta Conjunta
-            </button>
+<!-- ===== MODAL EDITAR LANÇAMENTO ===== -->
+<div id="modal-edit" class="modal-overlay" style="display:none" onclick="closeEditModal(event)">
+    <div class="modal-box">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold text-gray-800">✏️ Editar Lançamento</h3>
+            <button onclick="closeEditModal()" class="text-gray-400 hover:text-gray-700 text-2xl leading-none">&times;</button>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Descrição</label>
+                <input type="text" id="edit-description" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Valor (R$)</label>
+                    <input type="number" id="edit-amount" step="0.01" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Tipo</label>
+                    <select id="edit-type" onchange="updateEditCategories()" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold">
+                        <option value="Saída">Saída</option>
+                        <option value="Entrada">Entrada</option>
+                    </select>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Data</label>
+                    <input type="date" id="edit-date" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Categoria</label>
+                    <select id="edit-category" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"></select>
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Conta</label>
+                <select id="edit-account" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"></select>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="edit-recorrente" class="w-4 h-4 accent-blue-600">
+                <label for="edit-recorrente" class="text-sm text-gray-700">Lançamento recorrente (todo mês)</label>
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button onclick="closeEditModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold p-3 rounded-xl transition hover:bg-gray-200">Cancelar</button>
+                <button onclick="saveEdit()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold p-3 rounded-xl transition">Salvar</button>
+            </div>
         </div>
     </div>
+</div>
 
-    <main class="p-4 max-w-md mx-auto space-y-6">
+<!-- ===== MODAL METAS ===== -->
+<div id="modal-metas" class="modal-overlay" style="display:none" onclick="closeMetasModal(event)">
+    <div class="modal-box">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold text-gray-800">🎯 Metas por Categoria</h3>
+            <button onclick="closeMetasModal()" class="text-gray-400 hover:text-gray-700 text-2xl leading-none">&times;</button>
+        </div>
+        <p class="text-xs text-gray-500 mb-4">Defina um limite mensal de gastos para cada categoria.</p>
+        <div id="metas-list" class="space-y-3 max-h-96 overflow-y-auto"></div>
+        <button onclick="saveMetas()" class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold p-3 rounded-xl transition">Salvar Metas</button>
+    </div>
+</div>
 
-        <!-- ABA PESSOAL -->
-        <div id="tab-pessoal" class="show space-y-6">
+<!-- ===== MODAL NOVA CONTA ===== -->
+<div id="modal-conta" class="modal-overlay" style="display:none" onclick="closeContaModal(event)">
+    <div class="modal-box">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold text-gray-800">➕ Nova Conta</h3>
+            <button onclick="closeContaModal()" class="text-gray-400 hover:text-gray-700 text-2xl leading-none">&times;</button>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Nome da conta</label>
+                <input type="text" id="nova-conta-nome" placeholder="Ex: Nubank, Poupança, Carteira..."
+                    class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Ícone</label>
+                <div id="emoji-picker" class="flex flex-wrap gap-2">
+                    <!-- preenchido via JS -->
+                </div>
+                <input type="hidden" id="nova-conta-emoji" value="🏦">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Saldo inicial (R$)</label>
+                <input type="number" id="nova-conta-saldo" step="0.01" placeholder="0.00"
+                    class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button onclick="closeContaModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold p-3 rounded-xl transition hover:bg-gray-200">Cancelar</button>
+                <button onclick="saveConta()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold p-3 rounded-xl transition">Criar Conta</button>
+            </div>
+        </div>
+    </div>
+</div>
 
-            <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-                <h2 class="text-md font-semibold text-gray-700 mb-4">➕ Novo Lançamento</h2>
-                <div class="space-y-4">
+<!-- ===== MODAL TRANSFERÊNCIA ===== -->
+<div id="modal-transfer" class="modal-overlay" style="display:none" onclick="closeTransferModal(event)">
+    <div class="modal-box">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold text-gray-800">🔄 Transferência entre Contas</h3>
+            <button onclick="closeTransferModal()" class="text-gray-400 hover:text-gray-700 text-2xl leading-none">&times;</button>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">De</label>
+                <select id="transfer-from" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Para</label>
+                <select id="transfer-to" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Valor (R$)</label>
+                <input type="number" id="transfer-amount" step="0.01" placeholder="0.00"
+                    class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Data</label>
+                <input type="date" id="transfer-date" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Descrição (opcional)</label>
+                <input type="text" id="transfer-desc" placeholder="Ex: Transferência para poupança"
+                    class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button onclick="closeTransferModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold p-3 rounded-xl transition hover:bg-gray-200">Cancelar</button>
+                <button onclick="executeTransfer()" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-semibold p-3 rounded-xl transition">Transferir</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- ===== HEADER ===== -->
+<header class="bg-gradient-to-r from-blue-700 to-blue-500 text-white p-6 sticky top-0 shadow-lg text-center rounded-b-3xl z-10">
+    <div id="header-pessoal">
+        <p class="text-sm font-medium text-blue-100 opacity-90 uppercase tracking-widest mb-1">Patrimônio Total</p>
+        <h1 class="text-4xl font-bold tracking-tight" id="main-balance">R$ 0,00</h1>
+        <button onclick="editInitialBalance()" class="mt-2 bg-blue-800 bg-opacity-40 hover:bg-opacity-60 text-white text-xs py-1 px-3 rounded-full transition">
+            ✏️ Ajustar Saldo Inicial
+        </button>
+    </div>
+    <div id="header-conjunta" style="display:none">
+        <p class="text-sm font-medium text-blue-100 opacity-90 uppercase tracking-widest mb-1">💑 Conta Conjunta</p>
+        <h1 class="text-4xl font-bold tracking-tight" id="conjunta-balance">R$ 0,00</h1>
+        <p class="text-xs text-blue-200 mt-1">Saldo disponível juntos</p>
+    </div>
+    <div id="header-contas" style="display:none">
+        <p class="text-sm font-medium text-blue-100 opacity-90 uppercase tracking-widest mb-1">💳 Minhas Contas</p>
+        <h1 class="text-4xl font-bold tracking-tight" id="contas-balance-header">R$ 0,00</h1>
+        <p class="text-xs text-blue-200 mt-1">Saldo total entre contas</p>
+    </div>
+</header>
+
+<!-- ABAS -->
+<div class="max-w-md mx-auto px-4 mt-4">
+    <div class="flex gap-1 bg-gray-200 p-1 rounded-xl">
+        <button id="btn-pessoal" class="tab-btn active flex-1 py-2 rounded-lg text-xs font-semibold" onclick="switchTab('pessoal')">💼 Pessoal</button>
+        <button id="btn-conjunta" class="tab-btn flex-1 py-2 rounded-lg text-xs font-semibold" onclick="switchTab('conjunta')">💑 Conjunta</button>
+        <button id="btn-contas" class="tab-btn flex-1 py-2 rounded-lg text-xs font-semibold" onclick="switchTab('contas')">💳 Contas</button>
+    </div>
+</div>
+
+<main class="p-4 max-w-md mx-auto space-y-6">
+
+    <!-- ============================= ABA PESSOAL ============================= -->
+    <div id="tab-pessoal" class="show space-y-6">
+
+        <!-- FORMULÁRIO -->
+        <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+            <h2 class="text-md font-semibold text-gray-700 mb-4">➕ Novo Lançamento</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Descrição</label>
+                    <input type="text" id="description" placeholder="Ex: Mercado, Conta de Luz..."
+                        class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Descrição</label>
-                        <input type="text" id="description" placeholder="Ex: Mercado, Conta de Luz..."
+                        <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Valor (R$)</label>
+                        <input type="number" id="amount" step="0.01" placeholder="0.00"
                             class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Valor (R$)</label>
-                            <input type="number" id="amount" step="0.01" placeholder="0.00"
-                                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Tipo</label>
-                            <select id="type" onchange="updateCategories()"
-                                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-red-600">
-                                <option value="Saída">Saída (Gasto)</option>
-                                <option value="Entrada">Entrada (Ganho)</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Data</label>
-                            <input type="date" id="date"
-                                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Categoria</label>
-                            <select id="category" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"></select>
-                        </div>
-                    </div>
-                    <button onclick="submitExpense()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold p-3 rounded-xl transition shadow-md">
-                        Registrar
-                    </button>
-                </div>
-            </section>
-
-            <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-md font-semibold text-gray-700">📊 Análise Mensal</h2>
-                    <button onclick="clearAllData()" class="text-xs text-red-500 font-medium hover:underline">Apagar Tudo</button>
-                </div>
-                <div class="grid grid-cols-2 gap-3 mb-4">
-                    <select id="filter-month" onchange="renderData()" class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none font-medium">
-                        <option value="TODOS">Todos os Meses</option>
-                    </select>
-                    <select id="filter-category" onchange="renderData()" class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none">
-                        <option value="TODAS">Todas Categorias</option>
-                    </select>
-                </div>
-                <div class="mb-5 relative w-full h-48 flex justify-center">
-                    <canvas id="expenseChart"></canvas>
-                </div>
-                <div class="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                    <p class="text-xs text-center text-gray-500 font-medium uppercase mb-2">Resumo do Período Filtrado</p>
-                    <div class="flex justify-between text-sm mb-1">
-                        <span class="text-gray-600">Entradas:</span>
-                        <span id="resumo-in" class="font-bold text-green-600">R$ 0,00</span>
-                    </div>
-                    <div class="flex justify-between text-sm mb-2 pb-2 border-b border-gray-200">
-                        <span class="text-gray-600">Saídas:</span>
-                        <span id="resumo-out" class="font-bold text-red-600">- R$ 0,00</span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-gray-800 font-semibold text-sm">Saldo do Período:</span>
-                        <span id="resumo-net" class="font-bold text-lg">R$ 0,00</span>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Tipo</label>
+                        <select id="type" onchange="updateCategories()"
+                            class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-red-600">
+                            <option value="Saída">Saída (Gasto)</option>
+                            <option value="Entrada">Entrada (Ganho)</option>
+                        </select>
                     </div>
                 </div>
-            </section>
-
-            <section class="space-y-3">
-                <h2 class="text-md font-semibold text-gray-700 px-1">📋 Histórico do Período</h2>
-                <div id="history-list" class="space-y-2"></div>
-            </section>
-
-            <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-                <h2 class="text-md font-semibold text-gray-700 mb-3">💾 Salvar / Restaurar Dados</h2>
-                <p class="text-xs text-gray-500 mb-4">Faça backups regulares para não perder nada caso troque de celular.</p>
                 <div class="grid grid-cols-2 gap-3">
-                    <button onclick="exportData()" class="w-full bg-gray-800 hover:bg-gray-900 text-white text-sm font-medium p-3 rounded-xl transition flex items-center justify-center gap-2">
-                        📥 Exportar Backup
-                    </button>
-                    <label class="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium p-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer border border-gray-300">
-                        📤 Importar Backup
-                        <input type="file" id="import-file" accept="*/*" onchange="importData(event)" class="hidden">
-                    </label>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Data</label>
+                        <input type="date" id="date"
+                            class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Categoria</label>
+                        <select id="category" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"></select>
+                    </div>
                 </div>
-            </section>
-
-        </div>
-
-        <!-- ABA CONTA CONJUNTA -->
-        <div id="tab-conjunta" class="space-y-6">
-
-            <div class="grid grid-cols-2 gap-3">
-                <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center">
-                    <p class="text-xs text-gray-500 uppercase font-medium mb-1">Total Depositado</p>
-                    <p id="conjunta-total-in" class="text-xl font-bold text-green-600">R$ 0,00</p>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Conta</label>
+                    <select id="account-select" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"></select>
                 </div>
-                <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center">
-                    <p class="text-xs text-gray-500 uppercase font-medium mb-1">Total Retirado</p>
-                    <p id="conjunta-total-out" class="text-xl font-bold text-red-500">R$ 0,00</p>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="recorrente" class="w-4 h-4 accent-blue-600">
+                    <label for="recorrente" class="text-sm text-gray-700">🔁 Lançamento recorrente (todo mês)</label>
+                </div>
+                <button onclick="submitExpense()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold p-3 rounded-xl transition shadow-md">
+                    Registrar
+                </button>
+            </div>
+        </section>
+
+        <!-- ANÁLISE -->
+        <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-md font-semibold text-gray-700">📊 Análise</h2>
+                <div class="flex gap-2">
+                    <button onclick="openMetasModal()" class="text-xs text-blue-500 font-medium hover:underline">🎯 Metas</button>
+                    <button onclick="clearAllData()" class="text-xs text-red-500 font-medium hover:underline">Apagar Tudo</button>
                 </div>
             </div>
 
-            <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-                <h2 class="text-md font-semibold text-gray-700 mb-4">💸 Movimentar Conta Conjunta</h2>
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Descrição</label>
-                        <input type="text" id="c-description" placeholder="Ex: Transferência de salário, Máquina de lavar..."
-                            class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500">
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Valor (R$)</label>
-                            <input type="number" id="c-amount" step="0.01" placeholder="0.00"
-                                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Operação</label>
-                            <select id="c-type" onchange="updateConjuntaSelect()"
-                                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 text-green-700 font-semibold">
-                                <option value="Depósito">➕ Depósito</option>
-                                <option value="Retirada">➖ Retirada</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Data</label>
-                        <input type="date" id="c-date"
-                            class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 text-sm">
-                    </div>
-                    <button onclick="submitConjunta()" class="w-full bg-pink-600 hover:bg-pink-700 text-white font-semibold p-3 rounded-xl transition shadow-md">
-                        Registrar na Conta Conjunta
-                    </button>
+            <!-- FILTROS -->
+            <div class="grid grid-cols-3 gap-2 mb-3">
+                <select id="filter-year" onchange="renderData()" class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none font-medium">
+                    <option value="TODOS">Todos Anos</option>
+                </select>
+                <select id="filter-month" onchange="renderData()" class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none font-medium">
+                    <option value="TODOS">Todos Meses</option>
+                </select>
+                <select id="filter-category" onchange="renderData()" class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                    <option value="TODAS">Categorias</option>
+                </select>
+            </div>
+            <div class="mb-2">
+                <select id="filter-account" onchange="renderData()" class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none">
+                    <option value="TODAS">Todas as Contas</option>
+                </select>
+            </div>
+
+            <!-- BUSCA -->
+            <div class="mb-4">
+                <input type="text" id="search-input" placeholder="🔍 Buscar por descrição..." oninput="renderData()"
+                    class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            </div>
+
+            <!-- ORDENAÇÃO -->
+            <div class="flex gap-2 mb-4">
+                <span class="text-xs text-gray-500 self-center">Ordenar:</span>
+                <select id="sort-by" onchange="renderData()" class="flex-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none">
+                    <option value="date-desc">Data ↓</option>
+                    <option value="date-asc">Data ↑</option>
+                    <option value="amount-desc">Valor ↓</option>
+                    <option value="amount-asc">Valor ↑</option>
+                    <option value="category">Categoria A-Z</option>
+                </select>
+            </div>
+
+            <!-- TOGGLE GRÁFICO -->
+            <div class="flex gap-2 mb-3">
+                <button id="chart-toggle-donut" onclick="setChartType('donut')" class="flex-1 text-xs py-1.5 rounded-lg bg-blue-600 text-white font-semibold transition">🍩 Categorias</button>
+                <button id="chart-toggle-line" onclick="setChartType('line')" class="flex-1 text-xs py-1.5 rounded-lg bg-gray-100 text-gray-600 font-semibold transition">📈 Evolução</button>
+            </div>
+
+            <div class="mb-5 relative w-full h-48 flex justify-center">
+                <canvas id="expenseChart"></canvas>
+            </div>
+
+            <!-- RESUMO -->
+            <div class="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                <p class="text-xs text-center text-gray-500 font-medium uppercase mb-2">Resumo do Período</p>
+                <div class="flex justify-between text-sm mb-1">
+                    <span class="text-gray-600">Entradas:</span>
+                    <span id="resumo-in" class="font-bold text-green-600">R$ 0,00</span>
                 </div>
-            </section>
-
-            <section class="space-y-3">
-                <h2 class="text-md font-semibold text-gray-700 px-1">📋 Histórico da Conta Conjunta</h2>
-                <div id="conjunta-history" class="space-y-2"></div>
-            </section>
-
-            <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-                <h2 class="text-md font-semibold text-gray-700 mb-3">💾 Backup da Conta Conjunta</h2>
-                <div class="grid grid-cols-2 gap-3">
-                    <button onclick="exportConjunta()" class="w-full bg-gray-800 hover:bg-gray-900 text-white text-sm font-medium p-3 rounded-xl transition flex items-center justify-center gap-2">
-                        📥 Exportar
-                    </button>
-                    <label class="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium p-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer border border-gray-300">
-                        📤 Importar
-                        <input type="file" id="import-conjunta" accept="*/*" onchange="importConjunta(event)" class="hidden">
-                    </label>
+                <div class="flex justify-between text-sm mb-2 pb-2 border-b border-gray-200">
+                    <span class="text-gray-600">Saídas:</span>
+                    <span id="resumo-out" class="font-bold text-red-600">- R$ 0,00</span>
                 </div>
-                <button onclick="clearConjuntaData()" class="mt-3 w-full text-xs text-red-500 font-medium hover:underline">Apagar toda a conta conjunta</button>
-            </section>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-800 font-semibold text-sm">Saldo do Período:</span>
+                    <span id="resumo-net" class="font-bold text-lg">R$ 0,00</span>
+                </div>
+            </div>
+        </section>
 
+        <!-- METAS -->
+        <div id="metas-progress-section" class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 hidden">
+            <h2 class="text-md font-semibold text-gray-700 mb-3">🎯 Progresso das Metas</h2>
+            <div id="metas-progress-list" class="space-y-3"></div>
         </div>
 
-    </main>
+        <!-- HISTÓRICO -->
+        <section class="space-y-3">
+            <h2 class="text-md font-semibold text-gray-700 px-1">📋 Histórico do Período</h2>
+            <div id="history-list" class="space-y-2"></div>
+        </section>
 
-    <script>
-        const categoriasGastos = [
-            "Contas fixas","Educação","Alimentação","Saúde","Casa",
-            "Lazer","Entretenimento","Cuidado pessoal","Pet",
-            "Compras","Impostos","Transporte","Viagem"
-        ];
-        const chartColors = [
-            '#ef4444','#f97316','#f59e0b','#84cc16','#22c55e',
-            '#06b6d4','#3b82f6','#6366f1','#a855f7','#ec4899',
-            '#f43f5e','#64748b','#78350f'
-        ];
+        <!-- BACKUP -->
+        <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+            <h2 class="text-md font-semibold text-gray-700 mb-3">💾 Salvar / Restaurar</h2>
+            <p class="text-xs text-gray-500 mb-4">Faça backups regulares para não perder nada caso troque de celular.</p>
+            <div class="grid grid-cols-3 gap-2">
+                <button onclick="exportData()" class="bg-gray-800 hover:bg-gray-900 text-white text-xs font-medium p-3 rounded-xl transition flex flex-col items-center justify-center gap-1">
+                    <span>📥</span><span>Exportar</span>
+                </button>
+                <label class="bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-medium p-3 rounded-xl transition flex flex-col items-center justify-center gap-1 cursor-pointer border border-gray-300">
+                    <span>📤</span><span>Importar</span>
+                    <input type="file" id="import-file" accept="*/*" onchange="importData(event)" class="hidden">
+                </label>
+                <button onclick="exportPDF()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-medium p-3 rounded-xl transition flex flex-col items-center justify-center gap-1">
+                    <span>📄</span><span>PDF</span>
+                </button>
+            </div>
+        </section>
+    </div>
 
-        let transactions = JSON.parse(localStorage.getItem('my_expenses')) || [];
-        let initialBalance = parseFloat(localStorage.getItem('my_initial_balance')) || 0.00;
-        let conjuntaTransactions = JSON.parse(localStorage.getItem('conjunta_expenses')) || [];
-        let expenseChart = null;
+    <!-- ============================= ABA CONTA CONJUNTA ============================= -->
+    <div id="tab-conjunta" class="space-y-6">
+        <div class="grid grid-cols-2 gap-3">
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center">
+                <p class="text-xs text-gray-500 uppercase font-medium mb-1">Depositado</p>
+                <p id="conjunta-total-in" class="text-xl font-bold text-green-600">R$ 0,00</p>
+            </div>
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center">
+                <p class="text-xs text-gray-500 uppercase font-medium mb-1">Retirado</p>
+                <p id="conjunta-total-out" class="text-xl font-bold text-red-500">R$ 0,00</p>
+            </div>
+        </div>
 
-        const formatMoney = (v) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const displayDate = (isoDate) => {
-            if (!isoDate || !isoDate.includes('-')) return isoDate;
-            const p = isoDate.split('-');
-            return `${p[2]}/${p[1]}/${p[0]}`;
-        };
-        const getMonthYear = (isoDate) => {
-            if (!isoDate || !isoDate.includes('-')) return "Desconhecido";
-            const p = isoDate.split('-');
-            return `${p[1]}/${p[0]}`;
-        };
-        const todayStr = () => {
-            const d = new Date();
-            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        };
+        <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+            <h2 class="text-md font-semibold text-gray-700 mb-4">💸 Movimentar Conta Conjunta</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Descrição</label>
+                    <input type="text" id="c-description" placeholder="Ex: Aluguel, Geladeira nova..."
+                        class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Valor (R$)</label>
+                        <input type="number" id="c-amount" step="0.01" placeholder="0.00"
+                            class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Operação</label>
+                        <select id="c-type" onchange="updateConjuntaSelect()"
+                            class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 text-green-700 font-semibold">
+                            <option value="Depósito">➕ Depósito</option>
+                            <option value="Retirada">➖ Retirada</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 uppercase mb-1">Data</label>
+                    <input type="date" id="c-date"
+                        class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 text-sm">
+                </div>
+                <button onclick="submitConjunta()" class="w-full bg-pink-600 hover:bg-pink-700 text-white font-semibold p-3 rounded-xl transition shadow-md">
+                    Registrar na Conta Conjunta
+                </button>
+            </div>
+        </section>
 
-        // ABAS
-        function switchTab(tab) {
-            document.getElementById('tab-pessoal').classList.toggle('show', tab === 'pessoal');
-            document.getElementById('tab-conjunta').classList.toggle('show', tab === 'conjunta');
-            document.getElementById('btn-pessoal').classList.toggle('active', tab === 'pessoal');
-            document.getElementById('btn-conjunta').classList.toggle('active', tab === 'conjunta');
-            document.getElementById('header-pessoal').style.display = tab === 'pessoal' ? '' : 'none';
-            document.getElementById('header-conjunta').style.display = tab === 'conjunta' ? '' : 'none';
-        }
+        <section class="space-y-3">
+            <div class="flex justify-between items-center px-1">
+                <h2 class="text-md font-semibold text-gray-700">📋 Histórico</h2>
+                <input type="text" id="conjunta-search" placeholder="🔍 Buscar..." oninput="renderConjunta()"
+                    class="p-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-pink-400 w-32">
+            </div>
+            <div id="conjunta-history" class="space-y-2"></div>
+        </section>
 
-        // SALDO INICIAL
-        function editInitialBalance() {
-            let userVal = prompt("Digite seu Patrimônio Inicial ou Atual na conta (ex: 1500.50):", initialBalance);
-            if (userVal !== null) {
-                userVal = userVal.replace(',', '.');
-                const parsed = parseFloat(userVal);
-                if (!isNaN(parsed)) {
-                    initialBalance = parsed;
-                    localStorage.setItem('my_initial_balance', initialBalance);
-                    renderData();
-                } else {
-                    alert("Por favor, digite um número válido.");
-                }
-            }
-        }
+        <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+            <h2 class="text-md font-semibold text-gray-700 mb-3">💾 Backup da Conta Conjunta</h2>
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="exportConjunta()" class="w-full bg-gray-800 hover:bg-gray-900 text-white text-sm font-medium p-3 rounded-xl transition flex items-center justify-center gap-2">📥 Exportar</button>
+                <label class="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium p-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer border border-gray-300">
+                    📤 Importar
+                    <input type="file" id="import-conjunta" accept="*/*" onchange="importConjunta(event)" class="hidden">
+                </label>
+            </div>
+            <button onclick="clearConjuntaData()" class="mt-3 w-full text-xs text-red-500 font-medium hover:underline">Apagar toda a conta conjunta</button>
+        </section>
+    </div>
 
-        // SELECTS
-        function initSelects() {
-            const catSelect = document.getElementById('category');
-            const filterCatSelect = document.getElementById('filter-category');
-            catSelect.innerHTML = '';
-            filterCatSelect.innerHTML = '<option value="TODAS">Todas Categorias</option>';
-            categoriasGastos.forEach(cat => {
-                catSelect.innerHTML += `<option value="${cat}">${cat}</option>`;
-                filterCatSelect.innerHTML += `<option value="${cat}">${cat}</option>`;
-            });
-            filterCatSelect.innerHTML += `<option value="Entrada">Ganhos (Entradas)</option>`;
-            updateMonthFilter();
-        }
+    <!-- ============================= ABA CONTAS ============================= -->
+    <div id="tab-contas" class="space-y-6">
 
-        function updateCategories() {
-            const typeEl = document.getElementById('type');
-            const catSelect = document.getElementById('category');
-            const val = typeEl.value;
-            if (val === 'Entrada') {
-                typeEl.classList.remove('text-red-600');
-                typeEl.classList.add('text-green-600');
-                catSelect.innerHTML = `<option value="Entrada">Entrada (Salário/Ganhos)</option>`;
-            } else {
-                typeEl.classList.remove('text-green-600');
-                typeEl.classList.add('text-red-600');
-                catSelect.innerHTML = '';
-                categoriasGastos.forEach(cat => {
-                    catSelect.innerHTML += `<option value="${cat}">${cat}</option>`;
-                });
-            }
-        }
+        <div class="flex gap-2">
+            <button onclick="openContaModal()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold p-3 rounded-xl transition shadow-md">➕ Nova Conta</button>
+            <button onclick="openTransferModal()" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold p-3 rounded-xl transition shadow-md">🔄 Transferir</button>
+        </div>
 
-        function updateConjuntaSelect() {
-            const sel = document.getElementById('c-type');
-            if (sel.value === 'Depósito') {
-                sel.classList.remove('text-red-600');
-                sel.classList.add('text-green-700');
-            } else {
-                sel.classList.remove('text-green-700');
-                sel.classList.add('text-red-600');
-            }
-        }
+        <div id="contas-list" class="space-y-3"></div>
 
-        function updateMonthFilter() {
-            const monthSelect = document.getElementById('filter-month');
-            const current = monthSelect.value;
-            monthSelect.innerHTML = '<option value="TODOS">Todos os Meses</option>';
-            const uniqueMonths = [...new Set(transactions.map(t => getMonthYear(t.date)))];
-            uniqueMonths.sort((a,b) => {
-                const [m1,y1] = a.split('/');
-                const [m2,y2] = b.split('/');
-                return new Date(`${y2}-${m2}-01`) - new Date(`${y1}-${m1}-01`);
-            });
-            uniqueMonths.forEach(m => {
-                monthSelect.innerHTML += `<option value="${m}">${m}</option>`;
-            });
-            if (uniqueMonths.includes(current)) monthSelect.value = current;
-        }
+        <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+            <h2 class="text-md font-semibold text-gray-700 mb-3">📋 Últimas Transferências</h2>
+            <div id="transfer-history" class="space-y-2"></div>
+        </section>
 
-        // REGISTRAR GASTO/ENTRADA
-        function submitExpense() {
-            const description = document.getElementById('description').value.trim();
-            const amountRaw = document.getElementById('amount').value.replace(',','.');
-            const amount = parseFloat(amountRaw);
-            const type = document.getElementById('type').value;  // "Saída" ou "Entrada"
-            const category = document.getElementById('category').value;
-            const date = document.getElementById('date').value;
+    </div>
 
-            if (!description) { alert("Digite uma descrição."); return; }
-            if (isNaN(amount) || amount <= 0) { alert("Digite um valor válido."); return; }
-            if (!date) { alert("Selecione uma data."); return; }
+</main>
 
-            // Garante que o type é exatamente "Saída" ou "Entrada"
-            const tipoFinal = (type === 'Entrada') ? 'Entrada' : 'Saída';
+<script>
+// ========================== DADOS E CONSTANTES ==========================
+const categoriasGastos = [
+    "Contas fixas","Educação","Alimentação","Saúde","Casa",
+    "Lazer","Entretenimento","Cuidado pessoal","Pet",
+    "Compras","Impostos","Transporte","Viagem"
+];
+const chartColors = [
+    '#ef4444','#f97316','#f59e0b','#84cc16','#22c55e',
+    '#06b6d4','#3b82f6','#6366f1','#a855f7','#ec4899',
+    '#f43f5e','#64748b','#78350f'
+];
+const emojiOptions = ['🏦','💳','💰','🏧','💵','🐷','📱','🏠','✈️','🎓','💼','🚗'];
 
-            const transaction = { id: Date.now(), description, amount, type: tipoFinal, category, date };
-            transactions.push(transaction);
-            transactions.sort((a,b) => new Date(b.date) - new Date(a.date));
-            localStorage.setItem('my_expenses', JSON.stringify(transactions));
+let transactions       = JSON.parse(localStorage.getItem('my_expenses'))          || [];
+let initialBalance     = parseFloat(localStorage.getItem('my_initial_balance'))   || 0;
+let conjuntaTransactions = JSON.parse(localStorage.getItem('conjunta_expenses'))  || [];
+let contas             = JSON.parse(localStorage.getItem('my_contas'))             || [];
+let transferencias     = JSON.parse(localStorage.getItem('my_transferencias'))     || [];
+let metas              = JSON.parse(localStorage.getItem('my_metas'))              || {};
+let editingId          = null;
+let expenseChart       = null;
+let currentChartType   = 'donut';
 
-            document.getElementById('description').value = '';
-            document.getElementById('amount').value = '';
-            document.getElementById('date').value = todayStr();
-            updateMonthFilter();
+// ========================== UTILS ==========================
+const formatMoney = v => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const displayDate = d => { if (!d || !d.includes('-')) return d; const p = d.split('-'); return `${p[2]}/${p[1]}/${p[0]}`; };
+const getMonthYear = d => { if (!d || !d.includes('-')) return "Desconhecido"; const p = d.split('-'); return `${p[1]}/${p[0]}`; };
+const getYear = d => { if (!d || !d.includes('-')) return "Desconhecido"; return d.split('-')[0]; };
+const getMonthName = mm => ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"][parseInt(mm)-1] || mm;
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+
+// ========================== TOAST ==========================
+function showToast(msg, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = msg;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3100);
+}
+
+// ========================== ABAS ==========================
+function switchTab(tab) {
+    ['pessoal','conjunta','contas'].forEach(t => {
+        document.getElementById(`tab-${t}`).classList.toggle('show', t === tab);
+        document.getElementById(`btn-${t}`).classList.toggle('active', t === tab);
+    });
+    document.getElementById('header-pessoal').style.display  = tab === 'pessoal'  ? '' : 'none';
+    document.getElementById('header-conjunta').style.display = tab === 'conjunta' ? '' : 'none';
+    document.getElementById('header-contas').style.display   = tab === 'contas'   ? '' : 'none';
+    if (tab === 'contas') renderContas();
+}
+
+// ========================== SALDO INICIAL ==========================
+function editInitialBalance() {
+    const userVal = prompt("Digite seu Patrimônio Inicial ou Atual na conta (ex: 1500.50):", initialBalance);
+    if (userVal !== null) {
+        const parsed = parseFloat(userVal.replace(',', '.'));
+        if (!isNaN(parsed)) {
+            initialBalance = parsed;
+            localStorage.setItem('my_initial_balance', initialBalance);
             renderData();
+        } else { showToast("Digite um número válido.", 'error'); }
+    }
+}
+
+// ========================== SELECTS ==========================
+function initSelects() {
+    const catSelect = document.getElementById('category');
+    const filterCatSelect = document.getElementById('filter-category');
+    catSelect.innerHTML = '';
+    filterCatSelect.innerHTML = '<option value="TODAS">Categorias</option>';
+    categoriasGastos.forEach(cat => {
+        catSelect.innerHTML += `<option value="${cat}">${cat}</option>`;
+        filterCatSelect.innerHTML += `<option value="${cat}">${cat}</option>`;
+    });
+    filterCatSelect.innerHTML += `<option value="Entrada">Ganhos (Entradas)</option>`;
+    refreshAccountSelects();
+    updateYearFilter();
+    updateMonthFilter();
+}
+
+function updateCategories() {
+    const typeEl = document.getElementById('type');
+    const catSelect = document.getElementById('category');
+    if (typeEl.value === 'Entrada') {
+        typeEl.classList.replace('text-red-600','text-green-600');
+        catSelect.innerHTML = `<option value="Entrada">Entrada (Salário/Ganhos)</option>`;
+    } else {
+        typeEl.classList.replace('text-green-600','text-red-600');
+        catSelect.innerHTML = '';
+        categoriasGastos.forEach(cat => { catSelect.innerHTML += `<option value="${cat}">${cat}</option>`; });
+    }
+}
+
+function updateConjuntaSelect() {
+    const sel = document.getElementById('c-type');
+    if (sel.value === 'Depósito') { sel.classList.replace('text-red-600','text-green-700'); }
+    else { sel.classList.replace('text-green-700','text-red-600'); }
+}
+
+function updateYearFilter() {
+    const yearSelect = document.getElementById('filter-year');
+    const current = yearSelect.value;
+    yearSelect.innerHTML = '<option value="TODOS">Todos Anos</option>';
+    const years = [...new Set(transactions.map(t => getYear(t.date)))].sort((a,b) => b-a);
+    years.forEach(y => { yearSelect.innerHTML += `<option value="${y}">${y}</option>`; });
+    if (years.includes(current)) yearSelect.value = current;
+}
+
+function updateMonthFilter() {
+    const monthSelect = document.getElementById('filter-month');
+    const current = monthSelect.value;
+    monthSelect.innerHTML = '<option value="TODOS">Todos Meses</option>';
+    const months = [
+        {v:'01',l:'Janeiro'},{v:'02',l:'Fevereiro'},{v:'03',l:'Março'},
+        {v:'04',l:'Abril'},{v:'05',l:'Maio'},{v:'06',l:'Junho'},
+        {v:'07',l:'Julho'},{v:'08',l:'Agosto'},{v:'09',l:'Setembro'},
+        {v:'10',l:'Outubro'},{v:'11',l:'Novembro'},{v:'12',l:'Dezembro'}
+    ];
+    months.forEach(m => { monthSelect.innerHTML += `<option value="${m.v}">${m.l}</option>`; });
+    if (current !== 'TODOS') monthSelect.value = current;
+}
+
+function refreshAccountSelects() {
+    const selects = ['account-select','edit-account','filter-account','transfer-from','transfer-to'];
+    selects.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const isFilter = id === 'filter-account';
+        el.innerHTML = isFilter ? '<option value="TODAS">Todas as Contas</option>' : '';
+        if (!isFilter && id !== 'transfer-from' && id !== 'transfer-to') {
+            el.innerHTML += `<option value="geral">💼 Geral (sem conta)</option>`;
         }
+        contas.forEach(c => {
+            el.innerHTML += `<option value="${c.id}">${c.emoji} ${c.nome}</option>`;
+        });
+        if (isFilter) el.innerHTML += `<option value="geral">💼 Geral</option>`;
+    });
+}
 
-        function deleteItem(id) {
-            if(confirm("Deseja mesmo apagar este lançamento?")) {
-                transactions = transactions.filter(i => i.id !== id);
-                localStorage.setItem('my_expenses', JSON.stringify(transactions));
-                updateMonthFilter();
-                renderData();
-            }
-        }
+// ========================== REGISTRAR ==========================
+function submitExpense() {
+    const description = document.getElementById('description').value.trim();
+    const amount = parseFloat(document.getElementById('amount').value.replace(',','.'));
+    const type = document.getElementById('type').value;
+    const category = document.getElementById('category').value;
+    const date = document.getElementById('date').value;
+    const account = document.getElementById('account-select').value;
+    const recorrente = document.getElementById('recorrente').checked;
 
-        function clearAllData() {
-            if(confirm("ATENÇÃO: Deseja apagar todo o histórico? Isso não pode ser desfeito sem um backup.")) {
-                transactions = [];
-                initialBalance = 0;
-                localStorage.removeItem('my_expenses');
-                localStorage.removeItem('my_initial_balance');
-                updateMonthFilter();
-                renderData();
-            }
-        }
+    if (!description) { showToast("Digite uma descrição.", 'error'); return; }
+    if (isNaN(amount) || amount <= 0) { showToast("Digite um valor válido.", 'error'); return; }
+    if (!date) { showToast("Selecione uma data.", 'error'); return; }
 
-        // GRÁFICO
-        function drawChart(filteredTransactions) {
-            const ctx = document.getElementById('expenseChart').getContext('2d');
-            const expenses = filteredTransactions.filter(t => t.type === 'Saída');
-            const categorySums = {};
-            expenses.forEach(t => { categorySums[t.category] = (categorySums[t.category] || 0) + t.amount; });
-            const labels = Object.keys(categorySums);
-            const data = Object.values(categorySums);
-            if (expenseChart) { expenseChart.destroy(); expenseChart = null; }
-            if (data.length === 0) return;
-            expenseChart = new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels,
-                    datasets: [{ data, backgroundColor: chartColors.slice(0, labels.length), borderWidth: 2, borderColor: '#ffffff' }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: {
-                        legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10 } } },
-                        tooltip: {
-                            callbacks: {
-                                label: (ctx) => {
-                                    let l = ctx.label ? ctx.label + ': ' : '';
-                                    if (ctx.parsed !== null) l += 'R$ ' + formatMoney(ctx.parsed);
-                                    return l;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
+    const transaction = { id: Date.now(), description, amount, type: type === 'Entrada' ? 'Entrada' : 'Saída', category, date, account, recorrente };
+    transactions.push(transaction);
+    transactions.sort((a,b) => new Date(b.date) - new Date(a.date));
+    localStorage.setItem('my_expenses', JSON.stringify(transactions));
 
-        // RENDER PESSOAL
-        function renderData() {
-            const catFilter = document.getElementById('filter-category').value;
-            const monthFilter = document.getElementById('filter-month').value;
-            const listContainer = document.getElementById('history-list');
-            listContainer.innerHTML = '';
+    document.getElementById('description').value = '';
+    document.getElementById('amount').value = '';
+    document.getElementById('date').value = todayStr();
+    document.getElementById('recorrente').checked = false;
+    updateYearFilter();
+    updateMonthFilter();
+    renderData();
+    showToast(`${type === 'Entrada' ? '✅ Entrada' : '✅ Saída'} registrada com sucesso!`);
+}
 
-            // Patrimônio total: saldo inicial + todas entradas - todas saídas
-            let totalInGlobal = 0;
-            let totalOutGlobal = 0;
-            transactions.forEach(t => {
-                if (t.type === 'Entrada') {
-                    totalInGlobal += t.amount;
-                } else {
-                    // Qualquer coisa que não seja 'Entrada' é Saída
-                    totalOutGlobal += t.amount;
-                }
-            });
-            const patrimonioAtual = initialBalance + totalInGlobal - totalOutGlobal;
-            document.getElementById('main-balance').innerText = `R$ ${formatMoney(patrimonioAtual)}`;
-
-            let filteredIn = 0;
-            let filteredOut = 0;
-            let currentFiltered = [];
-
-            transactions.forEach(item => {
-                const itemMonth = getMonthYear(item.date);
-                if (monthFilter !== 'TODOS' && itemMonth !== monthFilter) return;
-                currentFiltered.push(item);
-
-                if (catFilter !== 'TODAS' && item.category !== catFilter) return;
-
-                if (item.type === 'Entrada') {
-                    filteredIn += item.amount;
-                } else {
-                    filteredOut += item.amount;
-                }
-
-                const isEntrada = item.type === 'Entrada';
-                const priceColor = isEntrada ? 'text-green-600' : 'text-red-600';
-                const sign = isEntrada ? '+' : '-';
-                listContainer.innerHTML += `
-                    <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
-                        <div class="flex-1 min-w-0 pr-2">
-                            <p class="font-semibold text-gray-800 text-sm truncate">${item.description}</p>
-                            <div class="flex gap-2 text-xs text-gray-500 mt-1 items-center">
-                                <span class="bg-gray-100 px-2 py-0.5 rounded text-gray-600">${item.category}</span>
-                                <span>📅 ${displayDate(item.date)}</span>
-                            </div>
-                        </div>
-                        <div class="text-right flex flex-col items-end gap-1">
-                            <span class="font-bold ${priceColor} text-sm">${sign} R$ ${formatMoney(item.amount)}</span>
-                            <button onclick="deleteItem(${item.id})" class="text-gray-300 hover:text-red-500 text-xs">Apagar</button>
-                        </div>
-                    </div>`;
-            });
-
-            if (listContainer.innerHTML === '') {
-                listContainer.innerHTML = `<p class="text-center text-sm text-gray-400 py-6">Nenhum lançamento encontrado.</p>`;
-            }
-
-            drawChart(currentFiltered);
-
-            const netFiltered = filteredIn - filteredOut;
-            document.getElementById('resumo-in').innerText = `R$ ${formatMoney(filteredIn)}`;
-            document.getElementById('resumo-out').innerText = `- R$ ${formatMoney(filteredOut)}`;
-            const netEl = document.getElementById('resumo-net');
-            netEl.innerText = `R$ ${formatMoney(netFiltered)}`;
-            netEl.className = `font-bold text-lg ${netFiltered >= 0 ? 'text-blue-700' : 'text-red-600'}`;
-        }
-
-        // BACKUP PESSOAL
-        function exportData() {
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ transactions, initialBalance }));
-            const a = document.createElement('a');
-            a.setAttribute("href", dataStr);
-            a.setAttribute("download", "backup_financeiro.json");
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            alert("Backup exportado! Guarde em um local seguro.");
-        }
-        function importData(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const d = JSON.parse(e.target.result);
-                    if (d.transactions !== undefined && d.initialBalance !== undefined) {
-                        transactions = d.transactions;
-                        initialBalance = d.initialBalance;
-                        localStorage.setItem('my_expenses', JSON.stringify(transactions));
-                        localStorage.setItem('my_initial_balance', initialBalance);
-                        updateMonthFilter();
-                        renderData();
-                        alert("✅ Backup restaurado com sucesso!");
-                    } else { alert("❌ Arquivo inválido."); }
-                } catch(err) { alert("❌ Erro ao ler o arquivo."); }
-                event.target.value = '';
-            };
-            reader.readAsText(file);
-        }
-
-        // CONTA CONJUNTA
-        function renderConjunta() {
-            let totalIn = 0, totalOut = 0;
-            conjuntaTransactions.forEach(t => {
-                if (t.type === 'Depósito') totalIn += t.amount;
-                else totalOut += t.amount;
-            });
-            const saldo = totalIn - totalOut;
-            document.getElementById('conjunta-balance').innerText = `R$ ${formatMoney(saldo)}`;
-            document.getElementById('conjunta-total-in').innerText = `R$ ${formatMoney(totalIn)}`;
-            document.getElementById('conjunta-total-out').innerText = `R$ ${formatMoney(totalOut)}`;
-
-            const list = document.getElementById('conjunta-history');
-            list.innerHTML = '';
-            if (conjuntaTransactions.length === 0) {
-                list.innerHTML = `<p class="text-center text-sm text-gray-400 py-6">Nenhuma movimentação ainda.</p>`;
-                return;
-            }
-            [...conjuntaTransactions].sort((a,b) => new Date(b.date) - new Date(a.date)).forEach(item => {
-                const isDeposito = item.type === 'Depósito';
-                const color = isDeposito ? 'text-green-600' : 'text-red-500';
-                const sign = isDeposito ? '+' : '-';
-                const icon = isDeposito ? '⬆️' : '⬇️';
-                list.innerHTML += `
-                    <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
-                        <div class="flex-1 min-w-0 pr-2">
-                            <p class="font-semibold text-gray-800 text-sm truncate">${icon} ${item.description}</p>
-                            <span class="text-xs text-gray-400 mt-1 block">📅 ${displayDate(item.date)}</span>
-                        </div>
-                        <div class="text-right flex flex-col items-end gap-1">
-                            <span class="font-bold ${color} text-sm">${sign} R$ ${formatMoney(item.amount)}</span>
-                            <button onclick="deleteConjuntaItem(${item.id})" class="text-gray-300 hover:text-red-500 text-xs">Apagar</button>
-                        </div>
-                    </div>`;
-            });
-        }
-
-        function submitConjunta() {
-            const description = document.getElementById('c-description').value.trim();
-            const amountRaw = document.getElementById('c-amount').value.replace(',','.');
-            const amount = parseFloat(amountRaw);
-            const type = document.getElementById('c-type').value; // "Depósito" ou "Retirada"
-            const date = document.getElementById('c-date').value;
-
-            if (!description) { alert("Digite uma descrição."); return; }
-            if (isNaN(amount) || amount <= 0) { alert("Digite um valor válido."); return; }
-            if (!date) { alert("Selecione uma data."); return; }
-
-            conjuntaTransactions.push({ id: Date.now(), description, amount, type, date });
-            localStorage.setItem('conjunta_expenses', JSON.stringify(conjuntaTransactions));
-            document.getElementById('c-description').value = '';
-            document.getElementById('c-amount').value = '';
-            document.getElementById('c-date').value = todayStr();
-            renderConjunta();
-        }
-
-        function deleteConjuntaItem(id) {
-            if(confirm("Apagar esta movimentação?")) {
-                conjuntaTransactions = conjuntaTransactions.filter(i => i.id !== id);
-                localStorage.setItem('conjunta_expenses', JSON.stringify(conjuntaTransactions));
-                renderConjunta();
-            }
-        }
-
-        function clearConjuntaData() {
-            if(confirm("Apagar toda a conta conjunta? Faça backup antes.")) {
-                conjuntaTransactions = [];
-                localStorage.removeItem('conjunta_expenses');
-                renderConjunta();
-            }
-        }
-
-        function exportConjunta() {
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ conjuntaTransactions }));
-            const a = document.createElement('a');
-            a.setAttribute("href", dataStr);
-            a.setAttribute("download", "backup_conta_conjunta.json");
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            alert("Backup da conta conjunta exportado!");
-        }
-        function importConjunta(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const d = JSON.parse(e.target.result);
-                    if (d.conjuntaTransactions !== undefined) {
-                        conjuntaTransactions = d.conjuntaTransactions;
-                        localStorage.setItem('conjunta_expenses', JSON.stringify(conjuntaTransactions));
-                        renderConjunta();
-                        alert("✅ Conta conjunta restaurada!");
-                    } else { alert("❌ Arquivo inválido."); }
-                } catch(err) { alert("❌ Erro ao ler o arquivo."); }
-                event.target.value = '';
-            };
-            reader.readAsText(file);
-        }
-
-        // INIT
-        document.getElementById('date').value = todayStr();
-        document.getElementById('c-date').value = todayStr();
-        initSelects();
+function deleteItem(id) {
+    if (confirm("Deseja mesmo apagar este lançamento?")) {
+        transactions = transactions.filter(i => i.id !== id);
+        localStorage.setItem('my_expenses', JSON.stringify(transactions));
+        updateYearFilter();
+        updateMonthFilter();
         renderData();
+        showToast("Lançamento removido.", 'info');
+    }
+}
+
+function clearAllData() {
+    if (confirm("ATENÇÃO: Deseja apagar todo o histórico? Isso não pode ser desfeito sem um backup.")) {
+        transactions = []; initialBalance = 0;
+        localStorage.removeItem('my_expenses');
+        localStorage.removeItem('my_initial_balance');
+        updateYearFilter();
+        updateMonthFilter();
+        renderData();
+        showToast("Todos os dados foram apagados.", 'warning');
+    }
+}
+
+// ========================== EDITAR ==========================
+function openEditModal(id) {
+    const item = transactions.find(t => t.id === id);
+    if (!item) return;
+    editingId = id;
+    document.getElementById('edit-description').value = item.description;
+    document.getElementById('edit-amount').value = item.amount;
+    document.getElementById('edit-type').value = item.type;
+    document.getElementById('edit-date').value = item.date;
+    document.getElementById('edit-recorrente').checked = !!item.recorrente;
+    updateEditCategories();
+    setTimeout(() => {
+        document.getElementById('edit-category').value = item.category;
+        refreshAccountSelects();
+        document.getElementById('edit-account').value = item.account || 'geral';
+    }, 10);
+    document.getElementById('modal-edit').style.display = 'flex';
+}
+
+function closeEditModal(e) {
+    if (e && e.target !== document.getElementById('modal-edit')) return;
+    document.getElementById('modal-edit').style.display = 'none';
+    editingId = null;
+}
+
+function updateEditCategories() {
+    const type = document.getElementById('edit-type').value;
+    const catSelect = document.getElementById('edit-category');
+    catSelect.innerHTML = '';
+    if (type === 'Entrada') {
+        catSelect.innerHTML = `<option value="Entrada">Entrada (Salário/Ganhos)</option>`;
+    } else {
+        categoriasGastos.forEach(cat => { catSelect.innerHTML += `<option value="${cat}">${cat}</option>`; });
+    }
+}
+
+function saveEdit() {
+    const description = document.getElementById('edit-description').value.trim();
+    const amount = parseFloat(document.getElementById('edit-amount').value.replace(',','.'));
+    const type = document.getElementById('edit-type').value;
+    const category = document.getElementById('edit-category').value;
+    const date = document.getElementById('edit-date').value;
+    const account = document.getElementById('edit-account').value;
+    const recorrente = document.getElementById('edit-recorrente').checked;
+
+    if (!description) { showToast("Digite uma descrição.", 'error'); return; }
+    if (isNaN(amount) || amount <= 0) { showToast("Valor inválido.", 'error'); return; }
+    if (!date) { showToast("Selecione uma data.", 'error'); return; }
+
+    const idx = transactions.findIndex(t => t.id === editingId);
+    if (idx > -1) {
+        transactions[idx] = { ...transactions[idx], description, amount, type, category, date, account, recorrente };
+        transactions.sort((a,b) => new Date(b.date) - new Date(a.date));
+        localStorage.setItem('my_expenses', JSON.stringify(transactions));
+    }
+    document.getElementById('modal-edit').style.display = 'none';
+    editingId = null;
+    updateYearFilter();
+    updateMonthFilter();
+    renderData();
+    showToast("Lançamento atualizado! ✏️");
+}
+
+// ========================== METAS ==========================
+function openMetasModal() {
+    const list = document.getElementById('metas-list');
+    list.innerHTML = '';
+    categoriasGastos.forEach(cat => {
+        const val = metas[cat] || '';
+        list.innerHTML += `
+            <div class="flex items-center gap-3">
+                <span class="flex-1 text-sm text-gray-700">${cat}</span>
+                <div class="relative">
+                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">R$</span>
+                    <input type="number" id="meta-${cat}" value="${val}" placeholder="Sem limite" step="0.01"
+                        class="pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm w-36 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                </div>
+            </div>`;
+    });
+    document.getElementById('modal-metas').style.display = 'flex';
+}
+
+function closeMetasModal(e) {
+    if (e && e.target !== document.getElementById('modal-metas')) return;
+    document.getElementById('modal-metas').style.display = 'none';
+}
+
+function saveMetas() {
+    categoriasGastos.forEach(cat => {
+        const val = parseFloat(document.getElementById(`meta-${cat}`).value);
+        if (!isNaN(val) && val > 0) metas[cat] = val;
+        else delete metas[cat];
+    });
+    localStorage.setItem('my_metas', JSON.stringify(metas));
+    document.getElementById('modal-metas').style.display = 'none';
+    renderData();
+    showToast("Metas salvas! 🎯");
+}
+
+function renderMetasProgress(filteredTransactions, selectedMonth, selectedYear) {
+    const section = document.getElementById('metas-progress-section');
+    const list = document.getElementById('metas-progress-list');
+    if (Object.keys(metas).length === 0) { section.classList.add('hidden'); return; }
+    section.classList.remove('hidden');
+    list.innerHTML = '';
+
+    const gastosPorCat = {};
+    filteredTransactions.filter(t => t.type === 'Saída').forEach(t => {
+        gastosPorCat[t.category] = (gastosPorCat[t.category] || 0) + t.amount;
+    });
+
+    Object.entries(metas).forEach(([cat, limite]) => {
+        const gasto = gastosPorCat[cat] || 0;
+        const pct = Math.min((gasto / limite) * 100, 100);
+        const over = gasto > limite;
+        const warn = pct >= 80;
+        const fillClass = over ? 'over' : warn ? 'warn' : 'ok';
+        const color = over ? 'text-red-600' : warn ? 'text-amber-600' : 'text-green-600';
+        list.innerHTML += `
+            <div>
+                <div class="flex justify-between text-xs text-gray-600 mb-1">
+                    <span class="font-medium">${cat}</span>
+                    <span class="${color} font-bold">R$ ${formatMoney(gasto)} / R$ ${formatMoney(limite)}</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill ${fillClass}" style="width:${pct}%"></div>
+                </div>
+            </div>`;
+    });
+}
+
+// ========================== GRÁFICOS ==========================
+function setChartType(type) {
+    currentChartType = type;
+    document.getElementById('chart-toggle-donut').className = `flex-1 text-xs py-1.5 rounded-lg font-semibold transition ${type === 'donut' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`;
+    document.getElementById('chart-toggle-line').className  = `flex-1 text-xs py-1.5 rounded-lg font-semibold transition ${type === 'line'  ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`;
+    renderData();
+}
+
+function drawDonutChart(filtered) {
+    const ctx = document.getElementById('expenseChart').getContext('2d');
+    const expenses = filtered.filter(t => t.type === 'Saída');
+    const sums = {};
+    expenses.forEach(t => { sums[t.category] = (sums[t.category] || 0) + t.amount; });
+    const labels = Object.keys(sums), data = Object.values(sums);
+    if (expenseChart) { expenseChart.destroy(); expenseChart = null; }
+    if (!data.length) return;
+    expenseChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: { labels, datasets: [{ data, backgroundColor: chartColors.slice(0, labels.length), borderWidth: 2, borderColor: '#ffffff' }] },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10 } } },
+                tooltip: { callbacks: { label: ctx => `${ctx.label}: R$ ${formatMoney(ctx.parsed)}` } }
+            }
+        }
+    });
+}
+
+function drawLineChart(allTransactions) {
+    const ctx = document.getElementById('expenseChart').getContext('2d');
+    if (expenseChart) { expenseChart.destroy(); expenseChart = null; }
+
+    // Agrupar por mês/ano
+    const monthMap = {};
+    allTransactions.forEach(t => {
+        const my = getMonthYear(t.date);
+        if (!monthMap[my]) monthMap[my] = { in: 0, out: 0 };
+        if (t.type === 'Entrada') monthMap[my].in += t.amount;
+        else monthMap[my].out += t.amount;
+    });
+
+    const sorted = Object.entries(monthMap).sort((a,b) => {
+        const [ma,ya] = a[0].split('/'); const [mb,yb] = b[0].split('/');
+        return new Date(`${ya}-${ma}-01`) - new Date(`${yb}-${mb}-01`);
+    });
+    if (!sorted.length) return;
+
+    const labels = sorted.map(([my]) => { const [m,y] = my.split('/'); return `${getMonthName(m)}/${y.slice(2)}`; });
+    const ins  = sorted.map(([,v]) => v.in);
+    const outs = sorted.map(([,v]) => v.out);
+    const saldos = sorted.map(([,v]) => v.in - v.out);
+
+    expenseChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Entradas', data: ins, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, fill: false },
+                { label: 'Saídas', data: outs, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', tension: 0.3, fill: false },
+                { label: 'Saldo', data: saldos, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', tension: 0.3, fill: true }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } },
+                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: R$ ${formatMoney(ctx.parsed.y)}` } }
+            },
+            scales: {
+                y: { ticks: { font: { size: 9 }, callback: v => `R$${formatMoney(v)}` } },
+                x: { ticks: { font: { size: 9 } } }
+            }
+        }
+    });
+}
+
+// ========================== RENDER PESSOAL ==========================
+function getContaNome(accountId) {
+    if (!accountId || accountId === 'geral') return null;
+    const c = contas.find(c => c.id === accountId);
+    return c ? `${c.emoji} ${c.nome}` : null;
+}
+
+function sortTransactions(list) {
+    const by = document.getElementById('sort-by').value;
+    return [...list].sort((a,b) => {
+        if (by === 'date-desc') return new Date(b.date) - new Date(a.date);
+        if (by === 'date-asc')  return new Date(a.date) - new Date(b.date);
+        if (by === 'amount-desc') return b.amount - a.amount;
+        if (by === 'amount-asc')  return a.amount - b.amount;
+        if (by === 'category') return (a.category||'').localeCompare(b.category||'');
+        return 0;
+    });
+}
+
+function renderData() {
+    const catFilter    = document.getElementById('filter-category').value;
+    const monthFilter  = document.getElementById('filter-month').value;
+    const yearFilter   = document.getElementById('filter-year').value;
+    const accountFilter= document.getElementById('filter-account').value;
+    const searchVal    = (document.getElementById('search-input').value || '').toLowerCase().trim();
+    const listContainer= document.getElementById('history-list');
+    listContainer.innerHTML = '';
+
+    // Patrimônio total
+    let totalInGlobal = 0, totalOutGlobal = 0;
+    transactions.forEach(t => { t.type === 'Entrada' ? totalInGlobal += t.amount : totalOutGlobal += t.amount; });
+    document.getElementById('main-balance').innerText = `R$ ${formatMoney(initialBalance + totalInGlobal - totalOutGlobal)}`;
+
+    // Filtragem
+    let filteredIn = 0, filteredOut = 0, currentFiltered = [];
+    const displayList = [];
+
+    transactions.forEach(item => {
+        const itemMonth = item.date ? item.date.split('-')[1] : '';
+        const itemYear  = item.date ? item.date.split('-')[0] : '';
+        if (yearFilter  !== 'TODOS' && itemYear  !== yearFilter)  return;
+        if (monthFilter !== 'TODOS' && itemMonth !== monthFilter) return;
+        currentFiltered.push(item);
+
+        if (accountFilter !== 'TODAS' && (item.account || 'geral') !== accountFilter) return;
+        if (catFilter !== 'TODAS' && item.category !== catFilter) return;
+        if (searchVal && !item.description.toLowerCase().includes(searchVal)) return;
+
+        if (item.type === 'Entrada') filteredIn += item.amount;
+        else filteredOut += item.amount;
+        displayList.push(item);
+    });
+
+    const sorted = sortTransactions(displayList);
+
+    sorted.forEach(item => {
+        const isEntrada  = item.type === 'Entrada';
+        const priceColor = isEntrada ? 'text-green-600' : 'text-red-600';
+        const sign       = isEntrada ? '+' : '-';
+        const contaNome  = getContaNome(item.account);
+        const recBadge   = item.recorrente ? `<span class="badge-recorrente">🔁 recorrente</span>` : '';
+        const contaBadge = contaNome ? `<span class="conta-badge bg-blue-50 text-blue-600">${contaNome}</span>` : '';
+
+        listContainer.innerHTML += `
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+                <div class="flex-1 min-w-0 pr-2">
+                    <p class="font-semibold text-gray-800 text-sm truncate">${item.description}</p>
+                    <div class="flex flex-wrap gap-1.5 text-xs text-gray-500 mt-1 items-center">
+                        <span class="bg-gray-100 px-2 py-0.5 rounded text-gray-600">${item.category}</span>
+                        <span>📅 ${displayDate(item.date)}</span>
+                        ${recBadge}${contaBadge}
+                    </div>
+                </div>
+                <div class="text-right flex flex-col items-end gap-1">
+                    <span class="font-bold ${priceColor} text-sm">${sign} R$ ${formatMoney(item.amount)}</span>
+                    <div class="flex gap-2">
+                        <button onclick="openEditModal(${item.id})" class="text-blue-300 hover:text-blue-600 text-xs">Editar</button>
+                        <button onclick="deleteItem(${item.id})" class="text-gray-300 hover:text-red-500 text-xs">Apagar</button>
+                    </div>
+                </div>
+            </div>`;
+    });
+
+    if (!sorted.length) {
+        listContainer.innerHTML = `<p class="text-center text-sm text-gray-400 py-6">Nenhum lançamento encontrado.</p>`;
+    }
+
+    // Gráfico
+    if (currentChartType === 'donut') drawDonutChart(currentFiltered);
+    else drawLineChart(transactions);
+
+    // Metas
+    renderMetasProgress(currentFiltered, monthFilter, yearFilter);
+
+    // Resumo
+    const netFiltered = filteredIn - filteredOut;
+    document.getElementById('resumo-in').innerText  = `R$ ${formatMoney(filteredIn)}`;
+    document.getElementById('resumo-out').innerText = `- R$ ${formatMoney(filteredOut)}`;
+    const netEl = document.getElementById('resumo-net');
+    netEl.innerText   = `R$ ${formatMoney(netFiltered)}`;
+    netEl.className   = `font-bold text-lg ${netFiltered >= 0 ? 'text-blue-700' : 'text-red-600'}`;
+}
+
+// ========================== BACKUP PESSOAL ==========================
+function exportData() {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ transactions, initialBalance, contas, transferencias, metas }));
+    const a = document.createElement('a');
+    a.href = dataStr; a.download = "backup_financeiro.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    showToast("📥 Backup exportado com sucesso!");
+}
+function importData(event) {
+    const file = event.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        try {
+            const d = JSON.parse(e.target.result);
+            if (d.transactions !== undefined) {
+                transactions   = d.transactions;
+                initialBalance = d.initialBalance || 0;
+                if (d.contas)        { contas = d.contas; localStorage.setItem('my_contas', JSON.stringify(contas)); }
+                if (d.transferencias){ transferencias = d.transferencias; localStorage.setItem('my_transferencias', JSON.stringify(transferencias)); }
+                if (d.metas)         { metas = d.metas; localStorage.setItem('my_metas', JSON.stringify(metas)); }
+                localStorage.setItem('my_expenses', JSON.stringify(transactions));
+                localStorage.setItem('my_initial_balance', initialBalance);
+                refreshAccountSelects(); updateYearFilter(); updateMonthFilter(); renderData();
+                showToast("✅ Backup restaurado com sucesso!");
+            } else { showToast("❌ Arquivo inválido.", 'error'); }
+        } catch { showToast("❌ Erro ao ler o arquivo.", 'error'); }
+        event.target.value = '';
+    };
+    reader.readAsText(file);
+}
+
+// ========================== PDF ==========================
+function exportPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const monthFilter = document.getElementById('filter-month').value;
+    const yearFilter  = document.getElementById('filter-year').value;
+
+    let titulo = 'Relatório Financeiro';
+    if (yearFilter !== 'TODOS') titulo += ` — ${yearFilter}`;
+    if (monthFilter !== 'TODOS') titulo += ` / ${getMonthName(monthFilter)}`;
+
+    doc.setFontSize(16); doc.setTextColor(29, 78, 216);
+    doc.text(titulo, 14, 18);
+    doc.setFontSize(9); doc.setTextColor(100);
+    doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 25);
+
+    let totalIn = 0, totalOut = 0;
+    const rows = [];
+
+    transactions.forEach(t => {
+        const itemMonth = t.date ? t.date.split('-')[1] : '';
+        const itemYear  = t.date ? t.date.split('-')[0] : '';
+        if (yearFilter  !== 'TODOS' && itemYear  !== yearFilter)  return;
+        if (monthFilter !== 'TODOS' && itemMonth !== monthFilter) return;
+        if (t.type === 'Entrada') totalIn += t.amount; else totalOut += t.amount;
+        rows.push([displayDate(t.date), t.description, t.category, t.type, `R$ ${formatMoney(t.amount)}`]);
+    });
+
+    doc.autoTable({
+        head: [['Data','Descrição','Categoria','Tipo','Valor']],
+        body: rows,
+        startY: 32, styles: { fontSize: 8 },
+        headStyles: { fillColor: [29, 78, 216] },
+        alternateRowStyles: { fillColor: [245, 247, 250] }
+    });
+
+    const finalY = doc.lastAutoTable.finalY + 8;
+    doc.setFontSize(10); doc.setTextColor(0);
+    doc.text(`Entradas: R$ ${formatMoney(totalIn)}`,  14, finalY);
+    doc.text(`Saídas:   R$ ${formatMoney(totalOut)}`, 14, finalY + 6);
+    doc.setFontSize(11); doc.setTextColor(totalIn - totalOut >= 0 ? '#1d4ed8' : '#dc2626');
+    doc.text(`Saldo: R$ ${formatMoney(totalIn - totalOut)}`, 14, finalY + 14);
+
+    const fname = `relatorio_financeiro_${yearFilter}_${monthFilter}.pdf`;
+    doc.save(fname);
+    showToast("📄 PDF exportado!");
+}
+
+// ========================== CONTA CONJUNTA ==========================
+function renderConjunta() {
+    const search = (document.getElementById('conjunta-search').value || '').toLowerCase();
+    let totalIn = 0, totalOut = 0;
+    conjuntaTransactions.forEach(t => { t.type === 'Depósito' ? totalIn += t.amount : totalOut += t.amount; });
+    document.getElementById('conjunta-balance').innerText    = `R$ ${formatMoney(totalIn - totalOut)}`;
+    document.getElementById('conjunta-total-in').innerText   = `R$ ${formatMoney(totalIn)}`;
+    document.getElementById('conjunta-total-out').innerText  = `R$ ${formatMoney(totalOut)}`;
+
+    const list = document.getElementById('conjunta-history');
+    list.innerHTML = '';
+    const filtered = conjuntaTransactions.filter(t => !search || t.description.toLowerCase().includes(search));
+    if (!filtered.length) { list.innerHTML = `<p class="text-center text-sm text-gray-400 py-6">Nenhuma movimentação encontrada.</p>`; return; }
+    [...filtered].sort((a,b) => new Date(b.date) - new Date(a.date)).forEach(item => {
+        const isDeposito = item.type === 'Depósito';
+        const color = isDeposito ? 'text-green-600' : 'text-red-500';
+        const sign  = isDeposito ? '+' : '-';
+        list.innerHTML += `
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+                <div class="flex-1 min-w-0 pr-2">
+                    <p class="font-semibold text-gray-800 text-sm truncate">${isDeposito ? '⬆️' : '⬇️'} ${item.description}</p>
+                    <span class="text-xs text-gray-400 mt-1 block">📅 ${displayDate(item.date)}</span>
+                </div>
+                <div class="text-right flex flex-col items-end gap-1">
+                    <span class="font-bold ${color} text-sm">${sign} R$ ${formatMoney(item.amount)}</span>
+                    <button onclick="deleteConjuntaItem(${item.id})" class="text-gray-300 hover:text-red-500 text-xs">Apagar</button>
+                </div>
+            </div>`;
+    });
+}
+
+function submitConjunta() {
+    const description = document.getElementById('c-description').value.trim();
+    const amount = parseFloat(document.getElementById('c-amount').value.replace(',','.'));
+    const type = document.getElementById('c-type').value;
+    const date = document.getElementById('c-date').value;
+    if (!description) { showToast("Digite uma descrição.", 'error'); return; }
+    if (isNaN(amount) || amount <= 0) { showToast("Valor inválido.", 'error'); return; }
+    if (!date) { showToast("Selecione uma data.", 'error'); return; }
+    conjuntaTransactions.push({ id: Date.now(), description, amount, type, date });
+    localStorage.setItem('conjunta_expenses', JSON.stringify(conjuntaTransactions));
+    document.getElementById('c-description').value = '';
+    document.getElementById('c-amount').value = '';
+    document.getElementById('c-date').value = todayStr();
+    renderConjunta();
+    showToast(`${type === 'Depósito' ? '✅ Depósito' : '✅ Retirada'} registrada!`);
+}
+
+function deleteConjuntaItem(id) {
+    if (confirm("Apagar esta movimentação?")) {
+        conjuntaTransactions = conjuntaTransactions.filter(i => i.id !== id);
+        localStorage.setItem('conjunta_expenses', JSON.stringify(conjuntaTransactions));
         renderConjunta();
-    </script>
+        showToast("Movimentação removida.", 'info');
+    }
+}
+function clearConjuntaData() {
+    if (confirm("Apagar toda a conta conjunta? Faça backup antes.")) {
+        conjuntaTransactions = []; localStorage.removeItem('conjunta_expenses');
+        renderConjunta(); showToast("Conta conjunta apagada.", 'warning');
+    }
+}
+function exportConjunta() {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ conjuntaTransactions }));
+    const a = document.createElement('a'); a.href = dataStr; a.download = "backup_conta_conjunta.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    showToast("📥 Backup da conta conjunta exportado!");
+}
+function importConjunta(event) {
+    const file = event.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        try {
+            const d = JSON.parse(e.target.result);
+            if (d.conjuntaTransactions !== undefined) {
+                conjuntaTransactions = d.conjuntaTransactions;
+                localStorage.setItem('conjunta_expenses', JSON.stringify(conjuntaTransactions));
+                renderConjunta(); showToast("✅ Conta conjunta restaurada!");
+            } else { showToast("❌ Arquivo inválido.", 'error'); }
+        } catch { showToast("❌ Erro ao ler o arquivo.", 'error'); }
+        event.target.value = '';
+    };
+    reader.readAsText(file);
+}
+
+// ========================== CONTAS PERSONALIZADAS ==========================
+function openContaModal() {
+    document.getElementById('nova-conta-nome').value = '';
+    document.getElementById('nova-conta-saldo').value = '';
+    document.getElementById('nova-conta-emoji').value = '🏦';
+
+    const picker = document.getElementById('emoji-picker');
+    picker.innerHTML = '';
+    emojiOptions.forEach(em => {
+        const btn = document.createElement('button');
+        btn.textContent = em;
+        btn.className = 'text-2xl p-1.5 rounded-xl hover:bg-blue-50 border-2 border-transparent transition';
+        btn.onclick = () => {
+            document.getElementById('nova-conta-emoji').value = em;
+            picker.querySelectorAll('button').forEach(b => b.className = 'text-2xl p-1.5 rounded-xl hover:bg-blue-50 border-2 border-transparent transition');
+            btn.className = 'text-2xl p-1.5 rounded-xl bg-blue-50 border-2 border-blue-400 transition';
+        };
+        picker.appendChild(btn);
+    });
+    picker.children[0].click();
+    document.getElementById('modal-conta').style.display = 'flex';
+}
+
+function closeContaModal(e) {
+    if (e && e.target !== document.getElementById('modal-conta')) return;
+    document.getElementById('modal-conta').style.display = 'none';
+}
+
+function saveConta() {
+    const nome  = document.getElementById('nova-conta-nome').value.trim();
+    const emoji = document.getElementById('nova-conta-emoji').value;
+    const saldo = parseFloat(document.getElementById('nova-conta-saldo').value || '0');
+    if (!nome) { showToast("Digite um nome para a conta.", 'error'); return; }
+    const nova = { id: Date.now(), nome, emoji, saldoInicial: isNaN(saldo) ? 0 : saldo };
+    contas.push(nova);
+    localStorage.setItem('my_contas', JSON.stringify(contas));
+    document.getElementById('modal-conta').style.display = 'none';
+    refreshAccountSelects(); renderContas();
+    showToast(`${emoji} Conta "${nome}" criada!`);
+}
+
+function deleteConta(id) {
+    if (confirm("Apagar esta conta? Os lançamentos vinculados a ela não serão apagados.")) {
+        contas = contas.filter(c => c.id !== id);
+        localStorage.setItem('my_contas', JSON.stringify(contas));
+        refreshAccountSelects(); renderContas();
+        showToast("Conta removida.", 'info');
+    }
+}
+
+function getContaSaldo(contaId) {
+    let saldo = 0;
+    const c = contas.find(c => c.id === contaId);
+    if (c) saldo = c.saldoInicial || 0;
+    transactions.forEach(t => {
+        if ((t.account || 'geral') != contaId) return;
+        t.type === 'Entrada' ? saldo += t.amount : saldo -= t.amount;
+    });
+    transferencias.forEach(t => {
+        if (t.from == contaId) saldo -= t.amount;
+        if (t.to   == contaId) saldo += t.amount;
+    });
+    return saldo;
+}
+
+function renderContas() {
+    const list = document.getElementById('contas-list');
+    list.innerHTML = '';
+
+    // Saldo total
+    let totalContas = initialBalance;
+    contas.forEach(c => { totalContas += getContaSaldo(c.id) - (c.saldoInicial || 0); });
+    document.getElementById('contas-balance-header').innerText = `R$ ${formatMoney(totalContas)}`;
+
+    if (!contas.length) {
+        list.innerHTML = `<div class="bg-white p-6 rounded-2xl text-center text-gray-400 text-sm border border-gray-100">
+            <p class="text-3xl mb-2">💳</p><p>Nenhuma conta criada ainda.</p>
+            <p class="text-xs mt-1">Clique em "Nova Conta" para começar.</p></div>`;
+    } else {
+        contas.forEach(c => {
+            const saldo = getContaSaldo(c.id);
+            const cor = saldo >= 0 ? 'text-green-600' : 'text-red-600';
+            list.innerHTML += `
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
+                    <div class="flex items-center gap-3">
+                        <span class="text-3xl">${c.emoji}</span>
+                        <div>
+                            <p class="font-semibold text-gray-800">${c.nome}</p>
+                            <p class="text-xs text-gray-400">Saldo inicial: R$ ${formatMoney(c.saldoInicial||0)}</p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="font-bold ${cor} text-lg">R$ ${formatMoney(saldo)}</p>
+                        <button onclick="deleteConta(${c.id})" class="text-xs text-gray-300 hover:text-red-500">Apagar</button>
+                    </div>
+                </div>`;
+        });
+    }
+
+    // Histórico de transferências
+    const thist = document.getElementById('transfer-history');
+    thist.innerHTML = '';
+    if (!transferencias.length) {
+        thist.innerHTML = `<p class="text-center text-sm text-gray-400 py-4">Nenhuma transferência ainda.</p>`;
+    } else {
+        [...transferencias].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 20).forEach(t => {
+            const fromConta = contas.find(c => c.id == t.from);
+            const toConta   = contas.find(c => c.id == t.to);
+            const fromLabel = fromConta ? `${fromConta.emoji} ${fromConta.nome}` : '?';
+            const toLabel   = toConta   ? `${toConta.emoji} ${toConta.nome}` : '?';
+            thist.innerHTML += `
+                <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-700">${fromLabel} → ${toLabel}</p>
+                            <p class="text-xs text-gray-400">${t.desc || 'Transferência'} · 📅 ${displayDate(t.date)}</p>
+                        </div>
+                        <div class="text-right">
+                            <span class="font-bold text-purple-600 text-sm">R$ ${formatMoney(t.amount)}</span>
+                            <br><button onclick="deleteTransfer(${t.id})" class="text-xs text-gray-300 hover:text-red-500">Apagar</button>
+                        </div>
+                    </div>
+                </div>`;
+        });
+    }
+}
+
+// ========================== TRANSFERÊNCIAS ==========================
+function openTransferModal() {
+    if (contas.length < 2) { showToast("Você precisa de pelo menos 2 contas para transferir.", 'warning'); return; }
+    refreshAccountSelects();
+    document.getElementById('transfer-date').value = todayStr();
+    document.getElementById('transfer-amount').value = '';
+    document.getElementById('transfer-desc').value = '';
+    document.getElementById('modal-transfer').style.display = 'flex';
+}
+
+function closeTransferModal(e) {
+    if (e && e.target !== document.getElementById('modal-transfer')) return;
+    document.getElementById('modal-transfer').style.display = 'none';
+}
+
+function executeTransfer() {
+    const from   = document.getElementById('transfer-from').value;
+    const to     = document.getElementById('transfer-to').value;
+    const amount = parseFloat(document.getElementById('transfer-amount').value.replace(',','.'));
+    const date   = document.getElementById('transfer-date').value;
+    const desc   = document.getElementById('transfer-desc').value.trim() || 'Transferência';
+
+    if (from === to)         { showToast("Selecione contas diferentes.", 'error'); return; }
+    if (isNaN(amount) || amount <= 0) { showToast("Valor inválido.", 'error'); return; }
+    if (!date)               { showToast("Selecione uma data.", 'error'); return; }
+    if (!from || !to)        { showToast("Selecione as contas.", 'error'); return; }
+
+    transferencias.push({ id: Date.now(), from, to, amount, date, desc });
+    localStorage.setItem('my_transferencias', JSON.stringify(transferencias));
+    document.getElementById('modal-transfer').style.display = 'none';
+    renderContas();
+    showToast(`🔄 Transferência de R$ ${formatMoney(amount)} realizada!`);
+}
+
+function deleteTransfer(id) {
+    if (confirm("Apagar esta transferência?")) {
+        transferencias = transferencias.filter(t => t.id !== id);
+        localStorage.setItem('my_transferencias', JSON.stringify(transferencias));
+        renderContas(); showToast("Transferência removida.", 'info');
+    }
+}
+
+// ========================== RECORRENTES AUTOMÁTICOS ==========================
+function processarRecorrentes() {
+    const hoje = new Date();
+    const mesAtual = String(hoje.getMonth()+1).padStart(2,'0');
+    const anoAtual = String(hoje.getFullYear());
+    const recorrentes = transactions.filter(t => t.recorrente);
+
+    recorrentes.forEach(t => {
+        const [ano, mes] = t.date.split('-');
+        if (ano === anoAtual && mes === mesAtual) return; // já existe nesse mês
+        const jaExiste = transactions.some(x =>
+            x.description === t.description &&
+            x.amount === t.amount &&
+            x.recorrente &&
+            x.date.startsWith(`${anoAtual}-${mesAtual}`)
+        );
+        if (!jaExiste) {
+            const novoDate = `${anoAtual}-${mesAtual}-${t.date.split('-')[2]}`;
+            transactions.push({ ...t, id: Date.now() + Math.random(), date: novoDate });
+        }
+    });
+    transactions.sort((a,b) => new Date(b.date) - new Date(a.date));
+    localStorage.setItem('my_expenses', JSON.stringify(transactions));
+}
+
+// ========================== INIT ==========================
+document.getElementById('date').value   = todayStr();
+document.getElementById('c-date').value = todayStr();
+processarRecorrentes();
+initSelects();
+renderData();
+renderConjunta();
+</script>
 </body>
 </html>
