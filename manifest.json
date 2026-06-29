@@ -1,8 +1,8 @@
 {
   "name": "Meu Banco Pessoal",
   "short_name": "Meu Banco",
-  "start_url": "/controle-de-gastos/index.html",
-  "scope": "/controle-de-gastos/",
+  "start_url": "/index.html",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#1d4ed8",
   "theme_color": "#1d4ed8",
